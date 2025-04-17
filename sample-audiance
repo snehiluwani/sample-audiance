@@ -1,0 +1,83 @@
+<?php
+// === CONFIGURATION ===
+$accessToken = 'YOUR_ACCESS_TOKEN';
+$adAccountId = 'act_123456789'; // Replace with your ad account ID
+$audienceName = 'API Synced Audience';
+$audienceDescription = 'Uploaded via PHP script';
+$emails = [ // Replace with your user list
+    'john@example.com',
+    'sarah@example.com',
+    // Add more emails (up to tens of thousands if needed)
+];
+
+// === 1. Create Custom Audience ===
+function createAudience($accessToken, $adAccountId, $name, $description) {
+    $url = "https://graph.facebook.com/v19.0/{$adAccountId}/customaudiences";
+    $data = [
+        'name' => $name,
+        'subtype' => 'CUSTOM',
+        'description' => $description,
+        'customer_file_source' => 'USER_PROVIDED_ONLY',
+        'access_token' => $accessToken
+    ];
+
+    $response = sendPostRequest($url, $data);
+    if (isset($response['id'])) {
+        echo " Audience Created: " . $response['id'] . PHP_EOL;
+        return $response['id'];
+    } else {
+        die("❌s Failed to create audience:\n" . json_encode($response, JSON_PRETTY_PRINT));
+    }
+}
+
+// === 2. Add Users to Audience (Batch Upload) ===
+function uploadAudienceBatch($audienceId, $accessToken, $emails) {
+    $url = "https://graph.facebook.com/v19.0/{$audienceId}/users";
+
+    $hashedEmails = array_map(function ($email) {
+        return [hash('sha256', strtolower(trim($email)))];
+    }, $emails);
+
+    $payload = [
+        'payload' => [
+            'schema' => ['EMAIL'],
+            'data' => $hashedEmails
+        ],
+        'access_token' => $accessToken
+    ];
+
+    $response = sendPostRequest($url, $payload, true);
+    echo " Uploaded batch of " . count($emails) . " users\n";
+    print_r($response);
+}
+
+// === Helper Function: Send POST Request ===
+function sendPostRequest($url, $data, $isJson = false) {
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+
+    if ($isJson) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    } else {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    }
+
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    return $error ? ['error' => $error] : json_decode($response, true);
+}
+
+// === MAIN PROCESS ===
+$audienceId = createAudience($accessToken, $adAccountId, $audienceName, $audienceDescription);
+
+// Chunk emails into groups of 500
+$chunks = array_chunk($emails, 500);
+foreach ($chunks as $index => $batch) {
+    echo "Uploading batch #" . ($index + 1) . "\n";
+    uploadAudienceBatch($audienceId, $accessToken, $batch);
+    sleep(1); // Prevent API throttling
+}
